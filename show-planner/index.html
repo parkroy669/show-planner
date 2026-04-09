@@ -90,6 +90,67 @@
     background: #fff5f5; color: #c53030; border: 1px solid #fca5a5;
     border-radius: 10px; padding: 12px 16px; font-size: 13px; line-height: 1.6;
   }
+
+  /* 채팅 영역 */
+  .chat-section { margin-top: 1.5rem; }
+  .chat-header {
+    font-size: 13px; font-weight: 600; color: #666;
+    margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+  }
+  .chat-header::before {
+    content: '';
+    display: inline-block; width: 8px; height: 8px;
+    background: #22c55e; border-radius: 50%;
+  }
+  .chat-messages {
+    background: #fff; border: 1px solid #e8e8e4; border-radius: 14px;
+    padding: 1rem; margin-bottom: 10px;
+    max-height: 420px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .msg {
+    max-width: 85%; padding: 10px 14px; border-radius: 12px;
+    font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+  }
+  .msg-user {
+    align-self: flex-end;
+    background: #1a1a1a; color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .msg-ai {
+    align-self: flex-start;
+    background: #f5f5f3; color: #1a1a1a;
+    border-bottom-left-radius: 4px;
+  }
+  .msg-typing {
+    align-self: flex-start;
+    background: #f5f5f3; color: #999;
+    border-bottom-left-radius: 4px;
+    font-size: 13px;
+  }
+  .chat-input-row {
+    display: flex; gap: 8px; align-items: flex-end;
+  }
+  .chat-input {
+    flex: 1; border: 1px solid #e0e0db; border-radius: 10px;
+    padding: 10px 14px; font-size: 14px; font-family: inherit;
+    color: #1a1a1a; background: #fff; resize: none;
+    min-height: 44px; max-height: 120px; line-height: 1.5;
+    transition: border-color 0.15s;
+  }
+  .chat-input:focus { outline: none; border-color: #1a1a1a; }
+  .btn-send {
+    width: 44px; height: 44px; flex-shrink: 0;
+    background: #1a1a1a; color: #fff; border: none;
+    border-radius: 10px; cursor: pointer; font-size: 18px;
+    display: flex; align-items: center; justify-content: center;
+    transition: opacity 0.15s;
+  }
+  .btn-send:hover { opacity: 0.8; }
+  .btn-send:disabled { opacity: 0.3; cursor: not-allowed; }
+  .chat-hint {
+    font-size: 12px; color: #aaa; margin-top: 6px; text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -112,10 +173,27 @@
 
   <hr class="divider" id="result-divider" style="display:none">
   <div id="result-area"></div>
+
+  <div class="chat-section" id="chat-section" style="display:none">
+    <div class="chat-header">PD와 대화하기</div>
+    <div class="chat-messages" id="chat-messages"></div>
+    <div class="chat-input-row">
+      <textarea class="chat-input" id="chat-input"
+        placeholder="예: 3번 기획안 더 발전시켜줘 / 좀 더 자극적으로 바꿔봐"
+        rows="1"
+        onkeydown="handleKey(event)"
+        oninput="autoResize(this)"></textarea>
+      <button class="btn-send" id="send-btn" onclick="sendChat()">↑</button>
+    </div>
+    <p class="chat-hint">Enter로 전송 / Shift+Enter로 줄바꿈</p>
+  </div>
 </div>
 
 <script>
 let refs = ['', '', '', ''];
+let generatedItems = [];
+let chatHistory = [];
+let isChatting = false;
 
 function renderRefs() {
   const list = document.getElementById('ref-list');
@@ -143,6 +221,18 @@ function removeRef(i) {
   renderRefs();
 }
 
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendChat();
+  }
+}
+
 function copyAll(items) {
   const text = items.map((item, i) =>
     `[기획안 ${i+1}] ${item.title}\n${item.desc}\n흡입 포인트: ${item.hook}`
@@ -151,6 +241,37 @@ function copyAll(items) {
     const btn = document.getElementById('copy-all-btn');
     if (btn) { btn.textContent = '복사 완료!'; setTimeout(() => btn.textContent = '전체 결과 복사', 1500); }
   });
+}
+
+function buildContextString(items) {
+  return items.map((item, i) =>
+    `기획안 ${i+1}: ${item.title}\n설명: ${item.desc}\n포인트: ${item.hook}`
+  ).join('\n\n');
+}
+
+function appendMessage(role, text) {
+  const box = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = role === 'user' ? 'msg msg-user' : 'msg msg-ai';
+  div.textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  return div;
+}
+
+function appendTyping() {
+  const box = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'msg msg-typing';
+  div.id = 'typing-indicator';
+  div.textContent = 'PD가 생각 중...';
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function removeTyping() {
+  const el = document.getElementById('typing-indicator');
+  if (el) el.remove();
 }
 
 async function generate() {
@@ -163,6 +284,7 @@ async function generate() {
   btn.textContent = '생성 중...';
 
   document.getElementById('result-divider').style.display = 'block';
+  document.getElementById('chat-section').style.display = 'none';
   document.getElementById('result-area').innerHTML = `
     <div class="loading-box">
       <div class="spinner"></div>
@@ -175,7 +297,6 @@ async function generate() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ topic, refs: filledRefs }),
     });
-
     const data = await res.json();
 
     if (!res.ok || data.error) {
@@ -183,9 +304,11 @@ async function generate() {
       btn.disabled = false; btn.textContent = '기획안 10개 생성하기'; return;
     }
 
-    const items = data.items;
+    generatedItems = data.items;
+    chatHistory = [];
+
     let html = '';
-    items.forEach((item, i) => {
+    generatedItems.forEach((item, i) => {
       html += `
         <div class="result-item">
           <div class="result-num">기획안 ${i+1}</div>
@@ -194,8 +317,12 @@ async function generate() {
           ${item.hook ? `<div class="result-hook">흡입 포인트: ${item.hook}</div>` : ''}
         </div>`;
     });
-    html += `<button class="copy-btn" id="copy-all-btn" onclick='copyAll(${JSON.stringify(items)})'>전체 결과 복사</button>`;
+    html += `<button class="copy-btn" id="copy-all-btn" onclick='copyAll(${JSON.stringify(generatedItems)})'>전체 결과 복사</button>`;
     document.getElementById('result-area').innerHTML = html;
+
+    document.getElementById('chat-messages').innerHTML = '';
+    appendMessage('ai', '기획안 10개 나왔어. 발전시키고 싶은 거 있으면 말해봐. 예) "3번 더 발전시켜줘" 또는 "좀 더 자극적으로 바꿔봐"');
+    document.getElementById('chat-section').style.display = 'block';
 
   } catch(e) {
     document.getElementById('result-area').innerHTML = `<div class="error-box">오류: ${e.message}</div>`;
@@ -203,6 +330,49 @@ async function generate() {
 
   btn.disabled = false;
   btn.textContent = '기획안 10개 생성하기';
+}
+
+async function sendChat() {
+  if (isChatting) return;
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  isChatting = true;
+  document.getElementById('send-btn').disabled = true;
+  input.value = '';
+  input.style.height = 'auto';
+
+  appendMessage('user', text);
+  chatHistory.push({ role: 'user', content: text });
+  appendTyping();
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: chatHistory,
+        context: buildContextString(generatedItems),
+      }),
+    });
+    const data = await res.json();
+    removeTyping();
+
+    if (!res.ok || data.error) {
+      appendMessage('ai', '오류가 발생했어. 다시 해봐.');
+    } else {
+      appendMessage('ai', data.reply);
+      chatHistory.push({ role: 'assistant', content: data.reply });
+    }
+  } catch(e) {
+    removeTyping();
+    appendMessage('ai', '네트워크 오류가 났어. 다시 해봐.');
+  }
+
+  isChatting = false;
+  document.getElementById('send-btn').disabled = false;
+  input.focus();
 }
 
 renderRefs();
